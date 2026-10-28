@@ -48,17 +48,12 @@ export function realpathOrResolve(p) {
   }
 }
 
-function normalizeForCompare(p, platform) {
-  const n = path.normalize(p);
-  return platform === 'win32' ? n.toLowerCase() : n;
-}
-
-/** True when `child` is `parent` or inside it. */
+/** True when `child` is `parent` or inside it, using `platform`'s path rules. */
 export function isWithin(child, parent, platform = process.platform) {
-  const c = normalizeForCompare(child, platform);
-  const p = normalizeForCompare(parent, platform);
-  const rel = path.relative(p, c);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  const P = platform === 'win32' ? path.win32 : path.posix;
+  const norm = (x) => (platform === 'win32' ? P.normalize(x).toLowerCase() : P.normalize(x));
+  const rel = P.relative(norm(parent), norm(child));
+  return rel === '' || (!rel.startsWith('..') && !P.isAbsolute(rel));
 }
 
 /** True when both paths name the same directory. */

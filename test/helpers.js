@@ -9,7 +9,8 @@ export const SERVER = path.join(here, '..', 'cli', 'codex-exec-mcp.js');
 export const FAKE_CODEX = path.join(here, 'fixtures', 'fake-codex.mjs');
 
 export function tempProject() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cem-proj-')));
+  // .native expands Windows 8.3 short names (C:\\Users\\RUNNER~1), like the server does.
+  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cem-proj-')));
 }
 
 /** Start the server with the fake Codex and return a tiny JSON-RPC client. */
