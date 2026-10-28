@@ -1,0 +1,30 @@
+{
+  "name": "codex-exec",
+  "displayName": "Codex sub-agent (codex exec)",
+  "version": "1.0.0",
+  "description": "Delegate coding tasks to the Codex CLI as a sub-agent, using your own Codex model provider, and verify the result. Bundles the codex-exec-mcp server and the codex-delegate workflow skill.",
+  "author": {
+    "name": "JaegerY",
+    "url": "https://github.com/JaegerY"
+  },
+  "repository": "https://github.com/JaegerY/codex-exec-mcp",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "mcp",
+    "subagent",
+    "delegation",
+    "deepseek"
+  ],
+  "mcpServers": {
+    "codex": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/cli/codex-exec-mcp.js"
+      ],
+      "env": {
+        "CODEX_MCP_LEAN": "1"
+      }
+    }
+  }
+}

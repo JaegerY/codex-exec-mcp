@@ -1,0 +1,46 @@
+{
+  "name": "codex-exec-mcp",
+  "version": "1.0.0",
+  "description": "Zero-dependency MCP server that lets Claude (Claude Desktop, Claude Code) and other MCP clients delegate coding tasks to the Codex CLI as a sub-agent, using your own Codex model provider.",
+  "author": "JaegerY",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "codex-exec-mcp": "cli/codex-exec-mcp.js"
+  },
+  "files": [
+    "cli/",
+    "src/",
+    "skills/",
+    ".claude-plugin/",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node scripts/run-tests.js",
+    "doctor": "node cli/codex-exec-mcp.js doctor"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "codex",
+    "openai-codex",
+    "claude",
+    "claude-code",
+    "subagent",
+    "deepseek"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JaegerY/codex-exec-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JaegerY/codex-exec-mcp/issues"
+  },
+  "homepage": "https://github.com/JaegerY/codex-exec-mcp#readme"
+}

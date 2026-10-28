@@ -1,0 +1,14 @@
+{
+  "name": "codex-exec-mcp",
+  "description": "Codex CLI as a sub-agent for Claude Code",
+  "owner": {
+    "name": "JaegerY"
+  },
+  "plugins": [
+    {
+      "name": "codex-exec",
+      "source": "./",
+      "description": "Delegate coding tasks to the Codex CLI (your own model provider) and verify the result."
+    }
+  ]
+}
