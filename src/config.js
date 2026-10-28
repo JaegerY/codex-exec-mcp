@@ -2,6 +2,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { isTruthy } from './util.js';
 
+/** Modes of CODEX_MCP_FILE_TOOLS (workspace_read / workspace_write). */
+export const FILE_TOOL_MODES = ['off', 'read', 'readwrite'];
+
 export const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
 /** Values of Codex's `[windows] sandbox` setting. */
 export const WINDOWS_SANDBOX_MODES = ['unelevated', 'elevated', 'mxc'];
@@ -57,6 +60,12 @@ export function loadConfig(env = process.env) {
   if (windowsSandbox && !WINDOWS_SANDBOX_MODES.includes(windowsSandbox)) {
     throw new Error(`CODEX_MCP_WINDOWS_SANDBOX must be one of ${WINDOWS_SANDBOX_MODES.join(', ')}`);
   }
+  const allowedRoots = listFrom(env, 'CODEX_MCP_ALLOWED_ROOTS');
+  // Writing files directly is on by default only when the folders are fenced in.
+  const fileTools = (env.CODEX_MCP_FILE_TOOLS || (allowedRoots.length ? 'readwrite' : 'read')).trim().toLowerCase();
+  if (!FILE_TOOL_MODES.includes(fileTools)) {
+    throw new Error(`CODEX_MCP_FILE_TOOLS must be one of ${FILE_TOOL_MODES.join(', ')}`);
+  }
   return {
     codexPath: env.CODEX_MCP_CODEX_PATH || '',
     windowsSandbox,
@@ -67,7 +76,8 @@ export function loadConfig(env = process.env) {
       .filter(Boolean),
     snapshotMaxFiles: intFrom(env, 'CODEX_MCP_SNAPSHOT_MAX_FILES', 20000, 0, 1_000_000),
     defaultCwd: env.CODEX_MCP_DEFAULT_CWD || '',
-    allowedRoots: listFrom(env, 'CODEX_MCP_ALLOWED_ROOTS'),
+    allowedRoots,
+    fileTools,
     defaultSandbox,
     allowDanger,
     defaultModel: env.CODEX_MCP_DEFAULT_MODEL || '',

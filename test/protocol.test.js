@@ -20,7 +20,7 @@ test('legacy initialize echoes a supported version and lists tools', async () =>
 
     const list = await s.request('tools/list', {});
     const names = list.result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ['codex_cancel', 'codex_info', 'codex_run', 'codex_status']);
+    assert.deepEqual(names, ['codex_cancel', 'codex_info', 'codex_output', 'codex_run', 'codex_status', 'workspace_read']);
     for (const t of list.result.tools) {
       assert.equal(t.inputSchema.type, 'object');
       assert.ok(t.description.length > 20);
@@ -55,7 +55,7 @@ test('modern server/discover and stateless tools/list', async () => {
     // No initialize needed in the modern era.
     const list = await s.request('tools/list', { _meta: MODERN_META });
     assert.equal(list.result.resultType, 'complete');
-    assert.equal(list.result.tools.length, 4);
+    assert.equal(list.result.tools.length, 6);
     assert.equal(typeof list.result.ttlMs, 'number');
 
     const info = await s.request('tools/call', { _meta: MODERN_META, name: 'codex_info', arguments: {} });

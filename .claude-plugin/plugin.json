@@ -1,7 +1,7 @@
 {
   "name": "codex-exec",
   "displayName": "Codex sub-agent (codex exec)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Delegate coding tasks to the Codex CLI as a sub-agent, using your own Codex model provider, and verify the result. Bundles the codex-exec-mcp server and the codex-delegate workflow skill.",
   "author": {
     "name": "JaegerY",

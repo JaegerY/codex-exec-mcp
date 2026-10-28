@@ -3,7 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { SANDBOX_MODES } from './config.js';
 import { leanOverrides } from './codexConfig.js';
-import { formatDuration, isWithin, oneLine, realpathOrResolve, samePath, truncate } from './util.js';
+import { formatDuration, isWithin, oneLine, realpathOrResolve, samePath, tail, truncate } from './util.js';
+import { WorkspaceError, readEntries, writeEntries } from './workspace.js';
 
 /** A tool failure that should be reported to the model (isError result), not as a protocol error. */
 export class ToolError extends Error {}
@@ -24,6 +25,30 @@ function describeFiles(files, cwd, limit = 50) {
   const lines = entries.slice(0, limit).map(([p, kind]) => `  ${KIND_LETTER[kind] || '?'} ${p}${KIND_LETTER[kind] ? '' : ` (${kind})`}`);
   if (entries.length > limit) lines.push(`  … and ${entries.length - limit} more`);
   return lines.join('\n');
+}
+
+/** Drop the shell wrapper Codex puts around commands (powershell -Command, bash -lc, …) for previews. */
+export function shortCommand(command) {
+  const s = String(command ?? '').trim();
+  const m = /^"?[^"\s]*?(?:powershell|pwsh|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]+)$/i.exec(s);
+  if (!m) return s;
+  let inner = m[1].trim();
+  const q = inner[0];
+  if ((q === '"' || q === "'") && inner.endsWith(q) && inner.length > 1) inner = inner.slice(1, -1);
+  return inner;
+}
+
+function commandLine(rec, max = 90) {
+  const exit = rec.exitCode === null ? 'exit ?' : `exit ${rec.exitCode}`;
+  return `#${rec.index} ${exit} $ ${oneLine(shortCommand(rec.command), max)}`;
+}
+
+function lastCommands(job, n = 3) {
+  const log = job.commandLog || [];
+  if (!log.length) return '';
+  const lines = log.slice(-n).map((r) => `  ${commandLine(r)}`);
+  const more = log.length > n ? ` (last ${n} of ${log.length})` : '';
+  return `commands${more}; verbatim output via codex_output job_id "${job.id}" command N:\n${lines.join('\n')}`;
 }
 
 function statsLine(job) {
@@ -53,6 +78,8 @@ export function formatFinished(job, config) {
   out.push(`status: ${job.state} | job_id: ${job.id}${job.sessionId ? ` | session_id: ${job.sessionId}` : ''}`);
   out.push(statsLine(job));
   if (job.files.size) out.push(`files:\n${describeFiles(job.files, job.cwd)}`);
+  const cmds = lastCommands(job);
+  if (cmds) out.push(cmds);
   if (job.snapshotSkipped) out.push('note: workspace too large to snapshot; files changed by shell commands may be missing from this list.');
   if (job.state !== 'completed') {
     if (job.error) out.push(`error: ${job.error}`);
@@ -220,6 +247,101 @@ export function createTools({ config, codex, jobs, serverVersion }) {
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { title: 'Codex setup info', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
+    {
+      name: 'codex_output',
+      title: 'Verbatim command output of a Codex job',
+      description:
+        'Return the exact output of a command Codex ran in a job, straight from its event log; no model is involved, so nothing is paraphrased or mistyped. ' +
+        'Use it to read test results or an acceptance script\'s output yourself instead of trusting Codex\'s summary. ' +
+        'Without `command` or `match` it lists the job\'s commands with their numbers and exit codes. Works for finished and running jobs, and after a server restart (from the log folder).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          job_id: { type: 'string', description: 'job_id returned by codex_run.' },
+          command: { type: 'integer', description: 'Command number from the list (1 = first). Negative counts from the end (-1 = last).' },
+          match: { type: 'string', description: 'Pick the last command whose text contains this (case-insensitive), e.g. "unittest".' },
+          max_chars: { type: 'integer', minimum: 200, description: `Most characters of output to return (default ${config.maxOutputChars}).` },
+          head: { type: 'boolean', description: 'When output is longer than max_chars, return its beginning instead of its end (default: end, where test summaries are).' },
+        },
+        required: ['job_id'],
+        additionalProperties: false,
+      },
+      annotations: { title: 'Verbatim command output', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    ...(config.fileTools === 'off'
+      ? []
+      : [
+          {
+            name: 'workspace_read',
+            title: 'Read files in a workspace',
+            description:
+              'Read files or list folders inside an allowed workspace directly, without Codex (no tokens, exact bytes). ' +
+              'Text files are returned verbatim with their size and sha256 (plus BOM/CRLF flags); binary files report size and sha256 only; folders are listed. ' +
+              'Use it to review the files Codex changed and to read result files.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                cwd: {
+                  type: 'string',
+                  description: 'Absolute workspace directory; same rules as codex_run.' + (config.defaultCwd ? ` Default: ${config.defaultCwd}` : ''),
+                },
+                paths: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  minItems: 1,
+                  maxItems: 50,
+                  description: 'Files or folders, relative to cwd (or absolute inside it). Use "." for the workspace itself.',
+                },
+                recursive: { type: 'boolean', description: 'List folders recursively (skips .git, node_modules and similar). Default false.' },
+                max_chars: { type: 'integer', minimum: 200, description: `Total characters of file text to return (default ${config.maxOutputChars}).` },
+              },
+              required: ['paths'],
+              additionalProperties: false,
+            },
+            annotations: { title: 'Read files in a workspace', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+          },
+        ]),
+    ...(config.fileTools === 'readwrite'
+      ? [
+          {
+            name: 'workspace_write',
+            title: 'Write files in a workspace',
+            description:
+              'Write files inside an allowed workspace directly, byte for byte, without Codex (no tokens, no transcription errors). ' +
+              'Use it to seed a project, add an acceptance script or test data before delegating. ' +
+              'Existing files are kept unless overwrite is true; nothing is written if any entry is invalid. Writing inside .git is refused. Returns each file\'s size and sha256.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                cwd: {
+                  type: 'string',
+                  description: 'Absolute workspace directory; same rules as codex_run.' + (config.defaultCwd ? ` Default: ${config.defaultCwd}` : ''),
+                },
+                files: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 200,
+                  items: {
+                    type: 'object',
+                    properties: {
+                      path: { type: 'string', description: 'File path relative to cwd. Parent folders are created.' },
+                      content: { type: 'string', description: 'File content. Written exactly as given (no newline conversion).' },
+                      encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'utf8 (default) or base64 for binary data.' },
+                      sha256: { type: 'string', description: 'Optional expected sha256 of the bytes; the call fails if it differs.' },
+                    },
+                    required: ['path', 'content'],
+                    additionalProperties: false,
+                  },
+                },
+                overwrite: { type: 'boolean', description: 'Replace files that already exist. Default false.' },
+              },
+              required: ['files'],
+              additionalProperties: false,
+            },
+            annotations: { title: 'Write files in a workspace', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+          },
+        ]
+      : []),
   ];
 
   const tick = (ctx) => (job) => ctx.progress(progressMessage(job));
@@ -289,6 +411,78 @@ export function createTools({ config, codex, jobs, serverVersion }) {
       };
     },
 
+    async codex_output(args) {
+      const id = str(args, 'job_id', { required: true, max: 64 });
+      const found = jobs.commandsOf(id);
+      if (!found) throw new ToolError(`Unknown job_id "${id}" and no log folder for it in ${config.logDir}.`);
+      const { log, running, fromLog } = found;
+      const note = `${running ? ' (job still running)' : ''}${fromLog ? ' (read from the log folder)' : ''}`;
+      const hasIndex = args.command !== undefined && args.command !== null && args.command !== '';
+      const match = str(args, 'match', { max: 500 });
+      if (!hasIndex && !match) {
+        if (!log.length) return { text: `Job ${id} has no finished commands yet${note}.` };
+        const shown = log.slice(-100);
+        const lines = shown.map((r) => `${commandLine(r, 110)} (${r.outputChars} chars)`);
+        if (log.length > shown.length) lines.unshift(`… ${log.length - shown.length} earlier command(s) not shown`);
+        return { text: `Commands of job ${id}${note}:\n${lines.join('\n')}` };
+      }
+      let rec;
+      if (hasIndex) {
+        const n = typeof args.command === 'number' ? args.command : Number(args.command);
+        if (!Number.isInteger(n) || n === 0) throw new ToolError('"command" must be a non-zero integer');
+        rec = n > 0 ? log[n - 1] : log[log.length + n];
+        if (!rec) throw new ToolError(`Job ${id} has ${log.length} finished command(s); there is no command ${n}.`);
+      } else {
+        const needle = match.toLowerCase();
+        rec = [...log].reverse().find((r) => r.command.toLowerCase().includes(needle));
+        if (!rec) throw new ToolError(`No command of job ${id} contains "${match}". Call codex_output without "command" to list them.`);
+      }
+      const max = num(args, 'max_chars', config.maxOutputChars, 200, 2_000_000);
+      const head = args.head === true;
+      const outText = rec.output;
+      let body = outText;
+      let cut = '';
+      if (outText.length > max) {
+        body = head ? truncate(outText, max) : tail(outText, max);
+        cut = ` | showing ${head ? 'first' : 'last'} ${max} chars`;
+      }
+      const lost = rec.truncated ? ' | older output was not kept (see events.jsonl in the log folder)' : '';
+      return {
+        text: [
+          `#${rec.index} $ ${rec.command}`,
+          `exit: ${rec.exitCode === null ? '?' : rec.exitCode} | status: ${rec.status || '?'} | ${rec.outputChars} chars${cut}${lost}${note}`,
+          '--- output ---',
+          body,
+        ].join('\n'),
+      };
+    },
+
+    async workspace_read(args) {
+      if (config.fileTools === 'off') throw new ToolError('workspace_read is turned off (CODEX_MCP_FILE_TOOLS=off).');
+      const cwd = resolveCwd(str(args, 'cwd', { max: 4096 }), config);
+      const paths = args.paths;
+      if (!Array.isArray(paths) || !paths.length || paths.length > 50 || !paths.every((p) => typeof p === 'string' && p.length <= 4096)) {
+        throw new ToolError('"paths" must be a list of 1 to 50 path strings');
+      }
+      const maxChars = num(args, 'max_chars', config.maxOutputChars, 200, 2_000_000);
+      return { text: readEntries(cwd, paths, { maxChars, recursive: args.recursive === true }) };
+    },
+
+    async workspace_write(args) {
+      if (config.fileTools !== 'readwrite') {
+        throw new ToolError('workspace_write is turned off. The user can enable it with CODEX_MCP_FILE_TOOLS=readwrite (it is on by default when CODEX_MCP_ALLOWED_ROOTS is set).');
+      }
+      const cwd = resolveCwd(str(args, 'cwd', { max: 4096 }), config);
+      const files = args.files;
+      if (!Array.isArray(files) || !files.length || files.length > 200) throw new ToolError('"files" must be a list of 1 to 200 entries');
+      try {
+        return { text: `Wrote ${files.length} file(s) in ${cwd}:\n${writeEntries(cwd, files, { overwrite: args.overwrite === true })}` };
+      } catch (err) {
+        if (err instanceof WorkspaceError) throw new ToolError(err.message);
+        throw new ToolError(`write failed: ${err.message}`);
+      }
+    },
+
     async codex_info() {
       const lines = [`codex-exec-mcp ${serverVersion} (node ${process.version}, ${process.platform}/${process.arch})`];
       try {
@@ -331,6 +525,10 @@ export function createTools({ config, codex, jobs, serverVersion }) {
       } else {
         lines.push('lean mode: off (set CODEX_MCP_LEAN=1 to turn off plugins and your Codex MCP servers for sub-agent runs and save tokens)');
       }
+      lines.push(
+        `file tools: ${config.fileTools}` +
+          { off: ' (workspace_read and workspace_write disabled)', read: ' (workspace_read only; set CODEX_MCP_FILE_TOOLS=readwrite to allow workspace_write)', readwrite: ' (workspace_read + workspace_write inside allowed folders)' }[config.fileTools],
+      );
       lines.push(`change tracking: ${config.snapshotMaxFiles ? `workspace snapshot (up to ${config.snapshotMaxFiles} files) + Codex edits` : 'Codex edits only'}`);
       lines.push(`logs: ${config.logDir}`);
       return { text: lines.join('\n') };

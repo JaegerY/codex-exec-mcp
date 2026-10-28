@@ -8,6 +8,8 @@ import { isAlive, startServer, tempProject, waitUntil } from './helpers.js';
 test('codex_run completes and returns message, session id and change summary', async () => {
   const s = startServer();
   const cwd = tempProject();
+  fs.mkdirSync(path.join(cwd, 'src'));
+  fs.writeFileSync(path.join(cwd, 'src', 'a.js'), 'old');
   try {
     await s.initialize();
     const r = await s.call('codex_run', { prompt: 'do it [files]', cwd });

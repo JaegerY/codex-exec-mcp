@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+Based on a real delegation test (seed a buggy project, have Codex fix it, verify independently), where every file moved in or out had to be retyped by a model and one 7 KB acceptance script could not be reproduced exactly after 60 commands and 2.4M input tokens.
+
+- **`codex_output`:** returns the verbatim output of any command Codex ran in a job, by number or `match`, from memory or from the job's `events.jsonl` after a restart. Finished results now end with the last three commands (number, exit code, command with the PowerShell/bash wrapper removed).
+- **`workspace_read` / `workspace_write`:** read and write files inside the allowed workspace directly, with sizes and sha256, no model involved. Paths are resolved through symlinks and must stay inside `cwd`; `.git` is never written; a call writes nothing if any entry is invalid. `CODEX_MCP_FILE_TOOLS` = `off` | `read` | `readwrite`; writing is on by default only when `CODEX_MCP_ALLOWED_ROOTS` is set.
+- **Change list shows net changes:** a file Codex created with a patch and later deleted (or restored) is no longer listed as added.
+- The server instructions and the `codex-delegate` skill now use these tools for seeding and verification.
+- `codex-delegate` skill: new Windows trap — tell Codex to use PowerShell, because its first attempts with `bash.exe` (WSL) fail with `E_ACCESSDENIED` on machines without WSL and waste a step each.
+
 ## 1.0.0
 
 - **One-command install for Claude Desktop:** `codex-exec-mcp install [--root DIR] [--windows-sandbox MODE] [--no-lean]` and `uninstall`. Backs up the config, changes only the `mcpServers` entry, and writes absolute node and script paths. Finds the virtualised config of MSIX-packaged installs (Store, WinGet, packaged installers) under `%LOCALAPPDATA%\Packages\Claude_*`.

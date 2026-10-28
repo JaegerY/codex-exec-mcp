@@ -133,10 +133,39 @@ test('Codex patch edits and shell edits are merged; the snapshot decides the kin
   fs.writeFileSync(path.join(cwd, 'src', 'b.js'), 'existing');
   try {
     await s.initialize();
-    // fake reports src/a.js (update) and src/b.js (add) via file_change, but only touches b.js on disk
-    const r = await s.call('codex_run', { prompt: '[files] [touch:src/b.js]', cwd });
-    assert.match(r.text, / M src\/a\.js/, 'patch edit outside the snapshot is kept');
+    // fake reports src/a.js (update) and src/b.js (add) via file_change and writes both
+    const r = await s.call('codex_run', { prompt: '[files] [touch:extra.txt]', cwd });
+    assert.match(r.text, / A src\/a\.js/, 'a file that did not exist before is reported as added');
     assert.match(r.text, / M src\/b\.js/, 'existing file is reported as modified, not added');
+    assert.match(r.text, / A extra\.txt/);
+    assert.match(r.text, /files changed: 3/);
+  } finally {
+    await s.close();
+  }
+});
+
+test('files Codex created and then deleted are not listed', async () => {
+  const s = startServer();
+  const cwd = tempProject();
+  try {
+    await s.initialize();
+    const r = await s.call('codex_run', { prompt: '[files] [rm:src/b.js]', cwd });
+    assert.match(r.text, / A src\/a\.js/);
+    assert.doesNotMatch(r.text, /src\/b\.js/, 'a patch-created file removed later has no net change');
+    assert.match(r.text, /files changed: 1/);
+  } finally {
+    await s.close();
+  }
+});
+
+test('without a snapshot, Codex patch edits are listed as reported', async () => {
+  const s = startServer({ CODEX_MCP_SNAPSHOT_MAX_FILES: '0' });
+  const cwd = tempProject();
+  try {
+    await s.initialize();
+    const r = await s.call('codex_run', { prompt: '[files] [rm:src/b.js]', cwd });
+    assert.match(r.text, / M src\/a\.js/);
+    assert.match(r.text, / A src\/b\.js/);
   } finally {
     await s.close();
   }

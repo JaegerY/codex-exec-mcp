@@ -73,6 +73,11 @@ codex-exec-mcp doctor --live   # 额外用你的服务商实际跑一个很小�
 | `codex_status` | 等待任务完成并返回结果；不传 `job_id` 时列出最近的任务。 |
 | `codex_cancel` | 停止任务及它启动的所有进程。 |
 | `codex_info` | 显示 Codex 路径、版本、检测到的功能和本服务器配置，不消耗 token。 |
+| `codex_output` | 从事件日志里**逐字**取出 Codex 跑过的某条命令的输出（测试、脚本），按序号（`command`，负数从末尾数）或关键字（`match`）选；都不传时列出该任务的全部命令。不经过模型，服务器重启后也能读。 |
+| `workspace_read` | 直接读取允许目录内的文件或列出文件夹：原样文本，附大小、sha256 和 BOM/CRLF 标记。不消耗 token。 |
+| `workspace_write` | 直接按字节写入允许目录内的文件（utf8 或 base64，可校验预期 `sha256`，默认不覆盖，拒绝写入 `.git`）。用来放种子项目、验收脚本和测试数据。只有设置了 `CODEX_MCP_ALLOWED_ROOTS` 时默认开启。 |
+
+这三个工具让调用方验证 Codex 的工作时不必依赖它转抄：用 `workspace_write` 放入验收脚本，让 Codex 运行，用 `codex_output` 读真实输出，用 `workspace_read` 审查改动的文件。
 
 传入最新的 `session_id`，可以继续同一个 Codex 会话（`codex exec resume`）。
 
@@ -96,6 +101,7 @@ codex-exec-mcp doctor --live   # 额外用你的服务商实际跑一个很小�
 | `CODEX_MCP_TIMEOUT_SEC` | `1800` | 单个任务的最长运行时间。 |
 | `CODEX_MCP_MAX_CONCURRENT` | `4` | 最多同时运行的任务数。 |
 | `CODEX_MCP_MAX_OUTPUT_CHARS` | `20000` | 最终回复超过这个长度会被截断，完整内容保留在日志目录里。 |
+| `CODEX_MCP_FILE_TOOLS` | 设了允许目录时为 `readwrite`，否则 `read` | `off`、`read`（只有 `workspace_read`）或 `readwrite`（再加 `workspace_write`）。两者只能访问 `cwd` 允许的那些目录。 |
 | `CODEX_MCP_SNAPSHOT_MAX_FILES` | `20000` | 用来统计命令行改动的目录快照上限，会跳过 `.git`、`node_modules` 和构建目录。设为 `0` 关闭。 |
 | `CODEX_MCP_SKIP_GIT_REPO_CHECK` | `1` | 允许 Codex 在非 git 目录中工作。 |
 | `CODEX_MCP_LOG_DIR` / `CODEX_MCP_LOG_RETENTION_DAYS` | `<临时目录>/codex-exec-mcp` / `7` | 每个任务的日志（提示词、事件、stderr、最终回复）。 |
@@ -134,7 +140,7 @@ Codex 是一个会自主修改文件、执行命令的代理。本服务器能�
 ## 开发
 
 ```bash
-npm test                      # 43 个测试，使用模拟的 Codex，不需要网络或 API key
+npm test                      # 51 个测试，使用模拟的 Codex，不需要网络或 API key
 claude plugin validate .      # 校验插件和插件市场的配置文件
 ```
 

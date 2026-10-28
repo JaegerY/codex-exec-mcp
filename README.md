@@ -73,6 +73,11 @@ Or ask Claude to call `codex_info`.
 | `codex_status` | Wait for a job and return its result. Without `job_id` it lists recent jobs. |
 | `codex_cancel` | Stop a job and everything it started. |
 | `codex_info` | Codex path, version, detected features and this server's settings. Uses no tokens. |
+| `codex_output` | The **verbatim** output of a command Codex ran (test runs, scripts), taken from the event log, by number (`command`, negative counts from the end) or by `match`. Without either it lists the job's commands. No model involved; works after a server restart too. |
+| `workspace_read` | Read files or list folders inside an allowed workspace directly: exact text with size, sha256 and BOM/CRLF flags. No tokens. |
+| `workspace_write` | Write files inside an allowed workspace byte for byte (utf8 or base64, optional expected `sha256`, `overwrite` off by default, never inside `.git`). For seeding projects, acceptance scripts and test data. On by default only when `CODEX_MCP_ALLOWED_ROOTS` is set. |
+
+These three exist so the client can verify Codex's work without trusting Codex to retype anything: put the acceptance script in with `workspace_write`, have Codex run it, read the real output with `codex_output`, and review changed files with `workspace_read`.
 
 Example result:
 
@@ -85,6 +90,9 @@ duration: 2m14s | commands: 6 | files changed: 2 | codex tokens: in 48210 (cache
 files:
   M src/http.ts
   A test/http.test.ts
+commands; verbatim output via codex_output job_id "j_mbx2k1a3f9" command N:
+  #5 exit 1 $ npm test
+  #6 exit 0 $ npm test
 To continue this Codex conversation, call codex_run with session_id "019a5c3e-…".
 ```
 
@@ -110,6 +118,7 @@ All settings are environment variables in the client's `env` block. `install` wr
 | `CODEX_MCP_TIMEOUT_SEC` | `1800` | Hard limit per Codex run. |
 | `CODEX_MCP_MAX_CONCURRENT` | `4` | Codex jobs running at once. |
 | `CODEX_MCP_MAX_OUTPUT_CHARS` | `20000` | Longer final messages are truncated (the full text stays in the log folder). |
+| `CODEX_MCP_FILE_TOOLS` | `readwrite` with allowed roots, else `read` | `off`, `read` (only `workspace_read`) or `readwrite` (also `workspace_write`). Both stay inside the same folders `cwd` may use. |
 | `CODEX_MCP_SNAPSHOT_MAX_FILES` | `20000` | Workspace snapshot used to list files changed by shell commands. Skips `.git`, `node_modules`, build folders. `0` turns it off. |
 | `CODEX_MCP_SKIP_GIT_REPO_CHECK` | `1` | Lets Codex work outside git repositories. |
 | `CODEX_MCP_LOG_DIR` / `CODEX_MCP_LOG_RETENTION_DAYS` | `<tmp>/codex-exec-mcp` / `7` | Per-job logs (prompt, events, stderr, final message). |
@@ -156,7 +165,7 @@ Claude ──MCP stdio──▶ codex-exec-mcp ──▶ codex exec --json --cd 
 ## Development
 
 ```bash
-npm test                      # 43 tests against a fake Codex; no network or API key
+npm test                      # 51 tests against a fake Codex; no network or API key
 claude plugin validate .      # plugin + marketplace manifests
 ```
 

@@ -124,7 +124,16 @@ if (prompt.includes('[hang]') || prompt.includes('[tree]')) {
   emit({ type: 'item.completed', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc ls', aggregated_output: 'a\nb\n', exit_code: 0, status: 'completed' } });
   if (prompt.includes('[files]')) {
     emit({ type: 'item.completed', item: { id: 'item_2', type: 'command_execution', command: 'npm test', aggregated_output: 'fail', exit_code: 1, status: 'failed' } });
+    // Like real Codex, a patch edit also changes the file on disk.
+    fs.mkdirSync('src', { recursive: true });
+    fs.writeFileSync('src/a.js', `patched ${Date.now()}`);
+    fs.writeFileSync('src/b.js', `patched ${Date.now()}`);
     emit({ type: 'item.completed', item: { id: 'item_3', type: 'file_change', changes: [{ path: 'src/a.js', kind: 'update' }, { path: 'src/b.js', kind: 'add' }], status: 'completed' } });
+  }
+  const bigOut = /\[bigout:(\d+)\]/.exec(prompt);
+  if (bigOut) {
+    const body = `HEAD-${'y'.repeat(Number(bigOut[1]))}-TAIL\nRan 7 tests OK\n`;
+    emit({ type: 'item.completed', item: { id: 'item_4', type: 'command_execution', command: '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command \'python -m unittest -v\'', aggregated_output: body, exit_code: 0, status: 'completed' } });
   }
   // Shell-style file changes that produce no file_change event.
   for (const m of prompt.matchAll(/\[touch:([^\]]+)\]/g)) {

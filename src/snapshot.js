@@ -7,7 +7,7 @@ import path from 'node:path';
  * (Codex only reports edits it makes with its own patch tool).
  */
 
-const SKIP_DIRS = new Set([
+export const SKIP_DIRS = new Set([
   '.git', '.hg', '.svn', 'node_modules', '.venv', 'venv', '__pycache__', '.mypy_cache', '.pytest_cache',
   '.tox', '.gradle', '.idea', 'dist', 'build', 'target', '.next', '.nuxt', '.turbo', '.cache', 'coverage',
 ]);
@@ -59,4 +59,15 @@ export function diffSnapshots(before, after) {
   }
   for (const p of before.keys()) if (!after.has(p)) changes.set(p, 'delete');
   return changes;
+}
+
+/**
+ * True when `p` is a file the snapshot of `root` would cover: inside `root`
+ * and not under one of the skipped directories.
+ */
+export function isTracked(p, root) {
+  const rel = path.relative(root, p);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  const parts = rel.split(/[\\/]+/);
+  return !parts.slice(0, -1).some((d) => SKIP_DIRS.has(d));
 }

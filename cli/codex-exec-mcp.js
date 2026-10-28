@@ -19,7 +19,8 @@ const INSTRUCTIONS = [
   'Good uses: implementing a well-specified change, refactoring, writing tests, investigating a bug, reviewing code (sandbox "read-only").',
   'Give codex_run a self-contained brief and an absolute cwd; ask Codex to finish with a short summary so the reply stays small.',
   'If codex_run returns status "running", keep calling codex_status with the job_id until it finishes.',
-  'Check Codex\'s work yourself (e.g. read the changed files or run the tests) before reporting success.',
+  'Check Codex\'s work yourself before reporting success: read changed files with workspace_read and real command output (e.g. test runs) with codex_output, rather than relying on Codex\'s summary.',
+  'To put exact content into a workspace (a seed project, an acceptance script, test data), use workspace_write instead of asking Codex to type it.',
 ].join(' ');
 
 const HELP = `codex-exec-mcp ${pkg.version}

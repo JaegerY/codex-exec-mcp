@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildExecArgs, killTree, spawnCodex } from './codex.js';
 import { leanOverrides } from './codexConfig.js';
-import { diffSnapshots, takeSnapshot } from './snapshot.js';
+import { diffSnapshots, isTracked, takeSnapshot } from './snapshot.js';
 import { newJobId, oneLine, tail } from './util.js';
 
 const FINISHED = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
@@ -12,6 +12,63 @@ const STDERR_KEEP = 8000;
 const STDOUT_KEEP = 20000;
 const MAX_JOBS_IN_MEMORY = 100;
 const FINISHED_JOB_TTL_MS = 6 * 60 * 60 * 1000;
+/** Output kept in memory per command, and per job, for codex_output. */
+const COMMAND_OUTPUT_KEEP = 1_000_000;
+const JOB_OUTPUT_KEEP = 8_000_000;
+
+/** One finished command as codex_output reports it. */
+function commandRecord(item, index) {
+  const output = typeof item.aggregated_output === 'string' ? item.aggregated_output : '';
+  return {
+    index,
+    command: String(item.command ?? ''),
+    exitCode: typeof item.exit_code === 'number' ? item.exit_code : null,
+    status: item.status || '',
+    output,
+    outputChars: output.length,
+    truncated: false,
+  };
+}
+
+/** Add a record, keeping the job's in-memory output bounded (the newest output wins). */
+function pushCommand(log, rec) {
+  if (rec.output.length > COMMAND_OUTPUT_KEEP) {
+    rec.output = rec.output.slice(rec.output.length - COMMAND_OUTPUT_KEEP);
+    rec.truncated = true;
+  }
+  log.push(rec);
+  let total = log.reduce((n, r) => n + r.output.length, 0);
+  for (const r of log) {
+    if (total <= JOB_OUTPUT_KEEP) break;
+    if (!r.output) continue;
+    total -= r.output.length;
+    r.output = '';
+    r.truncated = true;
+  }
+}
+
+/**
+ * Rebuild the command list of a job from its events.jsonl, e.g. after the MCP
+ * server restarted. Returns null when there is no log.
+ */
+export function readCommandLog(logDir) {
+  const text = safeRead(path.join(logDir, 'events.jsonl'));
+  if (text === null) return null;
+  const log = [];
+  for (const line of text.split('\n')) {
+    if (!line.includes('command_execution')) continue;
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (ev && ev.type === 'item.completed' && ev.item && ev.item.type === 'command_execution') {
+      pushCommand(log, commandRecord(ev.item, log.length + 1));
+    }
+  }
+  return log;
+}
 
 function safeMkdir(dir) {
   try {
@@ -80,6 +137,7 @@ export class Job extends EventEmitter {
       commands: 0,
       commandsFailed: 0,
       files: new Map(),
+      commandLog: [],
       usage: null,
       cancelRequested: false,
       timedOut: false,
@@ -125,6 +183,18 @@ export class JobManager {
 
   get(id) {
     return this.jobs.get(id) || null;
+  }
+
+  /**
+   * Commands of a job: from memory, or from its log folder when the job is
+   * no longer tracked (server restart, expiry). Null when unknown.
+   */
+  commandsOf(id) {
+    const job = this.get(id);
+    if (job) return { log: job.commandLog, running: !job.finished, fromLog: false };
+    if (!/^j_[a-z0-9]+$/i.test(id)) return null;
+    const log = readCommandLog(path.join(this.config.logDir, id));
+    return log ? { log, running: false, fromLog: true } : null;
   }
 
   list() {
@@ -341,6 +411,7 @@ export class JobManager {
           job.touch(`$ ${oneLine(item.command, 100)}`);
         } else {
           job.commands += 1;
+          pushCommand(job.commandLog, commandRecord(item, job.commands));
           const failed = item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
           if (failed) job.commandsFailed += 1;
           job.touch(`$ ${oneLine(item.command, 80)} → ${failed ? `exit ${item.exit_code ?? '?'}` : 'ok'}`);
@@ -395,8 +466,13 @@ export class JobManager {
     if (job.snapshotBefore) {
       const after = takeSnapshot(job.cwd, this.config.snapshotMaxFiles);
       if (after) {
-        // The snapshot is the ground truth for files inside the workspace.
-        for (const [p, kind] of diffSnapshots(job.snapshotBefore, after)) job.files.set(p, kind);
+        // The snapshot is the ground truth for files inside the workspace: a
+        // file Codex patched and later deleted (or restored) has no net change.
+        const diff = diffSnapshots(job.snapshotBefore, after);
+        for (const p of [...job.files.keys()]) {
+          if (isTracked(p, job.cwd) && !diff.has(p)) job.files.delete(p);
+        }
+        for (const [p, kind] of diff) job.files.set(p, kind);
       } else {
         job.snapshotSkipped = true;
       }
