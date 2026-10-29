@@ -1,10 +1,9 @@
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { SANDBOX_MODES } from './config.js';
 import { leanOverrides } from './codexConfig.js';
-import { formatDuration, isWithin, oneLine, realpathOrResolve, samePath, tail, truncate } from './util.js';
+import { formatDuration, isWithin, oneLine, tail, truncate } from './util.js';
 import { WorkspaceError, readEntries, writeEntries } from './workspace.js';
+import { AccessError, WorkspaceAccess } from './access.js';
 
 /** A tool failure that should be reported to the model (isError result), not as a protocol error. */
 export class ToolError extends Error {}
@@ -125,35 +124,6 @@ function num(args, key, def, min, max) {
   return Math.min(Math.max(Math.round(n), min), max);
 }
 
-/** Validate the working directory against the configured guard rails. */
-function resolveCwd(requested, config) {
-  const raw = requested || config.defaultCwd || process.cwd();
-  if (!path.isAbsolute(raw)) throw new ToolError(`cwd must be an absolute path, got "${raw}"`);
-  let stat;
-  try {
-    stat = fs.statSync(raw);
-  } catch {
-    throw new ToolError(`cwd does not exist: ${raw}`);
-  }
-  if (!stat.isDirectory()) throw new ToolError(`cwd is not a directory: ${raw}`);
-  const real = realpathOrResolve(raw);
-  const roots = config.allowedRoots.map(realpathOrResolve);
-  if (roots.length) {
-    if (!roots.some((r) => isWithin(real, r))) {
-      throw new ToolError(`cwd "${real}" is outside CODEX_MCP_ALLOWED_ROOTS (${roots.join(path.delimiter)})`);
-    }
-    return real;
-  }
-  // Without an allow-list, refuse locations that are almost certainly too broad.
-  if ([path.parse(real).root, os.homedir()].some((p) => samePath(real, realpathOrResolve(p)))) {
-    throw new ToolError(`Refusing to run Codex in "${real}" (filesystem root or home directory). Use a project directory, or set CODEX_MCP_ALLOWED_ROOTS.`);
-  }
-  if (process.platform === 'win32' && process.env.SystemRoot && isWithin(real, process.env.SystemRoot)) {
-    throw new ToolError(`Refusing to run Codex inside ${process.env.SystemRoot}. Pass a project directory as cwd.`);
-  }
-  return real;
-}
-
 function resolveSandbox(requested, config) {
   const sandbox = requested || config.defaultSandbox;
   if (!SANDBOX_MODES.includes(sandbox)) throw new ToolError(`sandbox must be one of: ${SANDBOX_MODES.join(', ')}`);
@@ -163,7 +133,16 @@ function resolveSandbox(requested, config) {
   return sandbox;
 }
 
-export function createTools({ config, codex, jobs, serverVersion }) {
+export function createTools({ config, codex, jobs, serverVersion, access = new WorkspaceAccess(config) }) {
+  const resolveCwd = async (requested, signal) => {
+    try {
+      return await access.resolveCwd(requested, { signal });
+    } catch (err) {
+      if (err instanceof AccessError) throw new ToolError(err.message);
+      throw err;
+    }
+  };
+
   const definitions = [
     {
       name: 'codex_run',
@@ -350,7 +329,7 @@ export function createTools({ config, codex, jobs, serverVersion }) {
     async codex_run(args, ctx) {
       const prompt = str(args, 'prompt', { required: true });
       if (!prompt.trim()) throw new ToolError('"prompt" must not be empty');
-      const cwd = resolveCwd(str(args, 'cwd', { max: 4096 }), config);
+      const cwd = await resolveCwd(str(args, 'cwd', { max: 4096 }), ctx.signal);
       const sandbox = resolveSandbox(str(args, 'sandbox', { max: 64 }), config);
       const sessionId = str(args, 'session_id', { max: 256 });
       if (sessionId && !/^[\w.:-]+$/.test(sessionId)) throw new ToolError('"session_id" contains invalid characters');
@@ -457,9 +436,9 @@ export function createTools({ config, codex, jobs, serverVersion }) {
       };
     },
 
-    async workspace_read(args) {
+    async workspace_read(args, ctx) {
       if (config.fileTools === 'off') throw new ToolError('workspace_read is turned off (CODEX_MCP_FILE_TOOLS=off).');
-      const cwd = resolveCwd(str(args, 'cwd', { max: 4096 }), config);
+      const cwd = await resolveCwd(str(args, 'cwd', { max: 4096 }), ctx.signal);
       const paths = args.paths;
       if (!Array.isArray(paths) || !paths.length || paths.length > 50 || !paths.every((p) => typeof p === 'string' && p.length <= 4096)) {
         throw new ToolError('"paths" must be a list of 1 to 50 path strings');
@@ -468,11 +447,11 @@ export function createTools({ config, codex, jobs, serverVersion }) {
       return { text: readEntries(cwd, paths, { maxChars, recursive: args.recursive === true }) };
     },
 
-    async workspace_write(args) {
+    async workspace_write(args, ctx) {
       if (config.fileTools !== 'readwrite') {
         throw new ToolError('workspace_write is turned off. The user can enable it with CODEX_MCP_FILE_TOOLS=readwrite (it is on by default when CODEX_MCP_ALLOWED_ROOTS is set).');
       }
-      const cwd = resolveCwd(str(args, 'cwd', { max: 4096 }), config);
+      const cwd = await resolveCwd(str(args, 'cwd', { max: 4096 }), ctx.signal);
       const files = args.files;
       if (!Array.isArray(files) || !files.length || files.length > 200) throw new ToolError('"files" must be a list of 1 to 200 entries');
       try {
@@ -500,7 +479,7 @@ export function createTools({ config, codex, jobs, serverVersion }) {
         lines.push(`codex: NOT AVAILABLE — ${err.message}`);
       }
       lines.push(`default cwd: ${config.defaultCwd || `(server working directory: ${process.cwd()})`}`);
-      lines.push(`allowed roots: ${config.allowedRoots.length ? config.allowedRoots.join(path.delimiter) : '(any, except filesystem root / home directory)'}`);
+      lines.push(...(await access.describe()));
       lines.push(`default sandbox: ${config.defaultSandbox}${config.allowDanger ? ' (danger-full-access allowed)' : ''}`);
       if (process.platform === 'win32') {
         lines.push(

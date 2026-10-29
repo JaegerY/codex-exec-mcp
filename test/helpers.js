@@ -21,6 +21,7 @@ export function startServer(env = {}) {
       ...process.env,
       CODEX_MCP_CODEX_PATH: FAKE_CODEX,
       CODEX_MCP_LOG_DIR: logDir,
+      CODEX_MCP_APPROVED_ROOTS_FILE: path.join(logDir, 'approved-roots.json'),
       CODEX_MCP_PROGRESS_INTERVAL_MS: '200',
       ...env,
     },
@@ -41,6 +42,17 @@ export function startServer(env = {}) {
       buffer = buffer.slice(idx + 1);
       rawLines.push(line);
       const msg = JSON.parse(line); // throws if the server ever writes non-JSON to stdout
+      if (typeof msg.method === 'string' && 'id' in msg) {
+        // A request from the server (roots/list, elicitation/create).
+        client.serverRequests.push(msg);
+        Promise.resolve(client.onServerRequest ? client.onServerRequest(msg) : undefined).then((result) => {
+          const reply = result === undefined
+            ? { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: `Method not found: ${msg.method}` } }
+            : { jsonrpc: '2.0', id: msg.id, result };
+          child.stdin.write(`${JSON.stringify(reply)}\n`);
+        });
+        continue;
+      }
       if ('id' in msg && pending.has(msg.id)) {
         pending.get(msg.id)(msg);
         pending.delete(msg.id);
@@ -59,6 +71,8 @@ export function startServer(env = {}) {
     logDir,
     notifications,
     rawLines,
+    serverRequests: [],
+    onServerRequest: null,
     get stderr() {
       return stderr;
     },
@@ -82,8 +96,8 @@ export function startServer(env = {}) {
         child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
       });
     },
-    async initialize(protocolVersion = '2025-06-18') {
-      const res = await client.request('initialize', { protocolVersion, capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+    async initialize(protocolVersion = '2025-06-18', capabilities = {}) {
+      const res = await client.request('initialize', { protocolVersion, capabilities, clientInfo: { name: 'test', version: '1' } });
       client.notify('notifications/initialized', {});
       return res;
     },

@@ -1,6 +1,6 @@
 {
   "name": "codex-exec-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Zero-dependency MCP server that lets Claude (Claude Desktop, Claude Code) and other MCP clients delegate coding tasks to the Codex CLI as a sub-agent, using your own Codex model provider.",
   "author": "JaegerY",
   "license": "MIT",

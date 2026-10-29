@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0
+
+- **Workspaces are allowed without editing `CODEX_MCP_ALLOWED_ROOTS`.** Besides the static list, `cwd` may now be inside
+  - a folder the client has open, read with MCP `roots/list` after connecting and again on `notifications/roots/list_changed`;
+  - a folder the user approved earlier (`~/.codex-exec-mcp/approved-roots.json`, managed with the new `allow`, `allowed` and `disallow` commands);
+  - a folder the user allows when asked through MCP elicitation, optionally remembered.
+  The filesystem root, home folder and Windows system folder are never added this way, and tool arguments can never widen the list. New settings: `CODEX_MCP_CLIENT_ROOTS`, `CODEX_MCP_ASK_ROOTS`, `CODEX_MCP_APPROVED_ROOTS_FILE`.
+- The server can now send requests to the client and records the client's name and capabilities; `codex_info` shows them (`client: …; roots: yes/no, elicitation: yes/no`) together with the folders currently allowed.
+- A refused `cwd` explains which ways of allowing it the connected client supports.
+- 8 new tests (59 total).
+
 ## 1.1.0
 
 Based on a real delegation test (seed a buggy project, have Codex fix it, verify independently), where every file moved in or out had to be retyped by a model and one 7 KB acceptance script could not be reproduced exactly after 60 commands and 2.4M input tokens.

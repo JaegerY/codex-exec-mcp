@@ -9,6 +9,7 @@ import { JobManager } from '../src/jobs.js';
 import { McpServer } from '../src/protocol.js';
 import { createTools, formatFinished } from '../src/tools.js';
 import { install, uninstall } from '../src/install.js';
+import { WorkspaceAccess, manageApproved } from '../src/access.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = fileURLToPath(import.meta.url);
@@ -18,6 +19,7 @@ const INSTRUCTIONS = [
   'Use these tools to hand coding work to Codex, an autonomous coding agent running on the user\'s machine with the user\'s own model provider.',
   'Good uses: implementing a well-specified change, refactoring, writing tests, investigating a bug, reviewing code (sandbox "read-only").',
   'Give codex_run a self-contained brief and an absolute cwd; ask Codex to finish with a short summary so the reply stays small.',
+  'cwd must be an allowed folder: folders the user has open in the client (MCP roots) and folders the user approved are allowed automatically; for any other folder the user is asked when the client supports it. Never try to get around a refusal.',
   'If codex_run returns status "running", keep calling codex_status with the job_id until it finishes.',
   'Check Codex\'s work yourself before reporting success: read changed files with workspace_read and real command output (e.g. test runs) with codex_output, rather than relying on Codex\'s summary.',
   'To put exact content into a workspace (a seed project, an acceptance script, test data), use workspace_write instead of asking Codex to type it.',
@@ -33,6 +35,9 @@ Usage:
                               Register this server in Claude Desktop (backup first, other
                               entries untouched). Lean mode is on unless --no-lean.
   codex-exec-mcp uninstall [--name codex] [--config FILE]
+  codex-exec-mcp allow DIR... | disallow DIR... | allowed
+                              Approve folders outside CODEX_MCP_ALLOWED_ROOTS (stored in
+                              ~/.codex-exec-mcp/approved-roots.json), remove them, or list them
   codex-exec-mcp doctor       Check that Codex can be found and print the detected setup
   codex-exec-mcp doctor --live [--cwd DIR]
                               Also run a tiny real Codex task (uses a few model tokens)
@@ -94,12 +99,22 @@ async function serve() {
   }
   const codex = new CodexCli(config);
   const jobs = new JobManager(config, codex);
-  const tools = createTools({ config, codex, jobs, serverVersion: pkg.version });
+  const access = new WorkspaceAccess(config, { log: (m) => process.stderr.write(`[codex-exec-mcp] ${m}\n`) });
+  const tools = createTools({ config, codex, jobs, serverVersion: pkg.version, access });
   const server = new McpServer({
     serverInfo: { name: 'codex-exec-mcp', title: 'Codex (codex exec)', version: pkg.version },
     instructions: INSTRUCTIONS,
     tools,
   });
+  // The client's open folders (MCP roots) and approval prompts (elicitation) feed the allow-list.
+  server.on('initialized', () =>
+    access.attach({
+      request: (method, params, opts) => server.request(method, params, opts),
+      capabilities: server.clientCapabilities,
+      info: server.clientInfo,
+    }),
+  );
+  server.on('rootsChanged', () => access.rootsChanged());
 
   let shuttingDown = false;
   const shutdown = (reason, code = 0) => {
@@ -131,6 +146,13 @@ if (argv.includes('--version') || argv.includes('-v')) {
   console.log(HELP);
 } else if (argv[0] === 'doctor' || argv.includes('--doctor')) {
   doctor(argv).then((code) => process.exit(code));
+} else if (['allow', 'disallow', 'allowed'].includes(argv[0])) {
+  try {
+    process.exit(manageApproved(argv, loadConfig(), (line) => console.log(line)));
+  } catch (err) {
+    console.error(`error: ${err.message}`);
+    process.exit(1);
+  }
 } else if (argv[0] === 'install' || argv[0] === 'uninstall') {
   try {
     const run = argv[0] === 'install' ? install : uninstall;

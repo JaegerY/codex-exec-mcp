@@ -43,6 +43,14 @@ function jsonArrayFrom(env, name) {
   return parsed;
 }
 
+/** Where folders the user approved are remembered; "off" disables the file. */
+function approvedRootsFile(env) {
+  const raw = (env.CODEX_MCP_APPROVED_ROOTS_FILE || '').trim();
+  if (/^(off|0|none)$/i.test(raw)) return '';
+  if (raw) return path.resolve(raw);
+  return path.join(os.homedir(), '.codex-exec-mcp', 'approved-roots.json');
+}
+
 /**
  * All configuration comes from environment variables so it can be set in any
  * MCP client's "env" block without depending on command-line quoting.
@@ -78,6 +86,9 @@ export function loadConfig(env = process.env) {
     defaultCwd: env.CODEX_MCP_DEFAULT_CWD || '',
     allowedRoots,
     fileTools,
+    clientRoots: env.CODEX_MCP_CLIENT_ROOTS !== '0',
+    askRoots: env.CODEX_MCP_ASK_ROOTS !== '0',
+    approvedRootsFile: approvedRootsFile(env),
     defaultSandbox,
     allowDanger,
     defaultModel: env.CODEX_MCP_DEFAULT_MODEL || '',

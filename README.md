@@ -43,7 +43,7 @@ This adds an `mcpServers.codex` entry to Claude Desktop's config (it also finds 
 
 | `install` option | Meaning |
 |---|---|
-| `--root DIR` (repeatable) | Folders Codex may work in. The first one is the default. Strongly recommended. |
+| `--root DIR` (repeatable) | Folders Codex may always work in. The first one is the default. Strongly recommended; folders open in the client and approved folders are added on top. |
 | `--windows-sandbox unelevated` | Windows: run commands sandboxed as your user. See [Windows notes](#windows-notes). |
 | `--no-lean` | Keep your Codex plugins and MCP servers available to the sub-agent. |
 | `--name NAME`, `--config FILE`, `--dry-run` | Entry name (default `codex`), another config file, show without writing. |
@@ -98,6 +98,17 @@ To continue this Codex conversation, call codex_run with session_id "019a5c3e-�
 
 Pass the latest `session_id` to continue the same Codex conversation (`codex exec resume`).
 
+## Which folders Codex may work in
+
+`cwd` must be inside one of these. Every source comes from you, never from the model's tool call:
+
+1. **`CODEX_MCP_ALLOWED_ROOTS`** (`install --root`).
+2. **The folders open in your client.** If the client supports MCP *roots*, the server asks for them after connecting and again whenever they change, and allows them automatically (subfolders included).
+3. **Folders you approved before**, kept in `~/.codex-exec-mcp/approved-roots.json`. Add them with `codex-exec-mcp allow DIR`, list with `codex-exec-mcp allowed`, remove with `codex-exec-mcp disallow DIR`.
+4. **A prompt.** For any other folder, if the client supports MCP *elicitation*, it asks you to allow it. "Remember this folder" (on by default) saves it in the approved file.
+
+The filesystem root, your home folder and the Windows system folder are never added by 2–4. `codex_info` shows what your client offers (`client: …; roots: yes/no, elicitation: yes/no`) and which folders are currently allowed. Turn the sources off with `CODEX_MCP_CLIENT_ROOTS=0`, `CODEX_MCP_ASK_ROOTS=0` or `CODEX_MCP_APPROVED_ROOTS_FILE=off`. Without `CODEX_MCP_ALLOWED_ROOTS` every folder except those three is allowed, as before.
+
 ## Configuration
 
 All settings are environment variables in the client's `env` block. `install` writes the common ones for you.
@@ -105,7 +116,10 @@ All settings are environment variables in the client's `env` block. `install` wr
 | Variable | Default | Meaning |
 |---|---|---|
 | `CODEX_MCP_DEFAULT_CWD` | server's working directory | Folder used when a call gives no `cwd`. |
-| `CODEX_MCP_ALLOWED_ROOTS` | *(any)* | Folders `cwd` must be inside (`;` on Windows, `:` elsewhere). The filesystem root, your home folder and the Windows system folder are always refused. |
+| `CODEX_MCP_ALLOWED_ROOTS` | *(any)* | Folders `cwd` must be inside (`;` on Windows, `:` elsewhere), in addition to client roots and approved folders. See [Which folders Codex may work in](#which-folders-codex-may-work-in). |
+| `CODEX_MCP_CLIENT_ROOTS` | `1` | `0` stops allowing the folders open in the client (MCP roots). |
+| `CODEX_MCP_ASK_ROOTS` | `1` | `0` stops asking (MCP elicitation) before using other folders. |
+| `CODEX_MCP_APPROVED_ROOTS_FILE` | `~/.codex-exec-mcp/approved-roots.json` | Where approved folders are kept; `off` disables it. |
 | `CODEX_MCP_LEAN` | `0` | `1` turns off Codex plugins and the MCP servers in `~/.codex/config.toml` for these runs only. See [Saving tokens](#saving-tokens). |
 | `CODEX_MCP_LEAN_KEEP` | | Comma-separated MCP server names to keep in lean mode. |
 | `CODEX_MCP_DEFAULT_SANDBOX` | `workspace-write` | `read-only`, `workspace-write` or `danger-full-access`. |
@@ -152,7 +166,7 @@ Other levers: keep tasks scoped, ask Codex for a short final report, and use a l
 
 ## Security
 
-Codex is an autonomous agent that edits files and runs commands. This server limits *where* it runs (`cwd` checks, allowed roots) and passes the sandbox you choose. The isolation itself comes from Codex's sandbox. Keep `workspace-write` or `read-only`, set allowed roots, and use it only on projects you trust. `danger-full-access` stays off unless you opt in.
+Codex is an autonomous agent that edits files and runs commands. This server limits *where* it runs (`cwd` checks against allowed roots, client roots and folders you approved; tool arguments can never widen them) and passes the sandbox you choose. The isolation itself comes from Codex's sandbox. Keep `workspace-write` or `read-only`, set allowed roots, and use it only on projects you trust. `danger-full-access` stays off unless you opt in.
 
 ## How it works
 
@@ -165,7 +179,7 @@ Claude ──MCP stdio──▶ codex-exec-mcp ──▶ codex exec --json --cd 
 ## Development
 
 ```bash
-npm test                      # 51 tests against a fake Codex; no network or API key
+npm test                      # 59 tests against a fake Codex; no network or API key
 claude plugin validate .      # plugin + marketplace manifests
 ```
 

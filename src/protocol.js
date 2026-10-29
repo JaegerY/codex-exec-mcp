@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { ToolError } from './tools.js';
 
 /**
@@ -34,7 +35,7 @@ class RpcError extends Error {
   }
 }
 
-export class McpServer {
+export class McpServer extends EventEmitter {
   /**
    * @param {object} opts
    * @param {{name:string, version:string, title?:string}} opts.serverInfo
@@ -43,6 +44,7 @@ export class McpServer {
    * @param {(msg:string)=>void} [opts.log]
    */
   constructor({ serverInfo, instructions, tools, log }) {
+    super();
     this.serverInfo = serverInfo;
     this.instructions = instructions;
     this.tools = tools;
@@ -51,6 +53,52 @@ export class McpServer {
     this.inflight = new Map(); // request id -> AbortController
     this.output = null;
     this.closed = false;
+    this.clientInfo = null;
+    this.clientCapabilities = {};
+    this.outgoing = new Map(); // our request id -> { resolve, reject, timer }
+    this.nextOutgoingId = 1;
+  }
+
+  /**
+   * Send a request to the client (roots/list, elicitation/create) and wait
+   * for its response. Only possible on the bidirectional legacy transport.
+   */
+  request(method, params, { timeoutMs = 30000, signal } = {}) {
+    if (this.closed || !this.output) return Promise.reject(new Error('connection closed'));
+    const id = `cem-${this.nextOutgoingId++}`;
+    return new Promise((resolve, reject) => {
+      const done = (fn, value) => {
+        const entry = this.outgoing.get(id);
+        if (!entry) return;
+        clearTimeout(entry.timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        this.outgoing.delete(id);
+        fn(value);
+      };
+      const onAbort = () => {
+        this.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'tool call cancelled' } });
+        done(reject, new Error('cancelled'));
+      };
+      const timer = setTimeout(() => done(reject, new Error(`${method} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+      if (timer.unref) timer.unref();
+      this.outgoing.set(id, {
+        resolve: (v) => done(resolve, v),
+        reject: (e) => done(reject, e),
+        timer,
+      });
+      if (signal) {
+        if (signal.aborted) return onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+      this.send({ jsonrpc: '2.0', id, method, params });
+    });
+  }
+
+  handleResponse(msg) {
+    const entry = this.outgoing.get(msg.id);
+    if (!entry) return;
+    if (msg.error) entry.reject(new Error(msg.error.message || `client error ${msg.error.code}`));
+    else entry.resolve(msg.result);
   }
 
   /** Attach to streams. Resolves when the input stream ends. */
@@ -75,6 +123,7 @@ export class McpServer {
       const end = () => {
         if (buffer.trim()) this.handleLine(buffer);
         buffer = '';
+        for (const entry of [...this.outgoing.values()]) entry.reject(new Error('connection closed'));
         resolve();
       };
       input.on('end', end);
@@ -114,7 +163,10 @@ export class McpServer {
       }
       return;
     }
-    if (typeof msg.method !== 'string') return; // a response; we never send requests
+    if (typeof msg.method !== 'string') {
+      if ('id' in msg && ('result' in msg || 'error' in msg)) this.handleResponse(msg);
+      return;
+    }
     const isRequest = 'id' in msg && msg.id !== null && msg.id !== undefined;
     if (!isRequest) {
       this.handleNotification(msg);
@@ -132,7 +184,8 @@ export class McpServer {
         ctl.abort();
       }
     }
-    // notifications/initialized and others need no action.
+    if (msg.method === 'notifications/initialized') this.emit('initialized');
+    else if (msg.method === 'notifications/roots/list_changed') this.emit('rootsChanged');
   }
 
   /** Decide which protocol era/version a request uses. */
@@ -185,8 +238,11 @@ export class McpServer {
         const requested = params.protocolVersion;
         const version = LEGACY_VERSIONS.includes(requested) ? requested : LEGACY_VERSIONS[0];
         this.legacyVersion = version;
-        const client = params.clientInfo ? `${params.clientInfo.name} ${params.clientInfo.version || ''}`.trim() : 'unknown client';
-        this.log(`initialize from ${client}, protocol ${requested} -> ${version}`);
+        this.clientInfo = params.clientInfo && typeof params.clientInfo === 'object' ? params.clientInfo : null;
+        this.clientCapabilities = params.capabilities && typeof params.capabilities === 'object' ? params.capabilities : {};
+        const client = this.clientInfo ? `${this.clientInfo.name} ${this.clientInfo.version || ''}`.trim() : 'unknown client';
+        const caps = Object.keys(this.clientCapabilities).join(', ') || 'none';
+        this.log(`initialize from ${client}, protocol ${requested} -> ${version}, client capabilities: ${caps}`);
         return {
           protocolVersion: version,
           capabilities: this.capabilities(),

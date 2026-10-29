@@ -81,6 +81,17 @@ codex-exec-mcp doctor --live   # 额外用你的服务商实际跑一个很小�
 
 传入最新的 `session_id`，可以继续同一个 Codex 会话（`codex exec resume`）。
 
+## Codex 可以在哪些目录工作
+
+`cwd` 必须位于下面任意一类目录之内。这些来源都来自你本人，模型的工具参数永远无法扩大范围：
+
+1. **`CODEX_MCP_ALLOWED_ROOTS`**（`install --root`）。
+2. **客户端里打开的文件夹。** 客户端支持 MCP *roots* 时，服务器连上后会向它索取，变动时重新读取，并自动放行（包括子目录）。
+3. **你之前批准过的文件夹**，保存在 `~/.codex-exec-mcp/approved-roots.json`。用 `codex-exec-mcp allow 目录` 添加，`codex-exec-mcp allowed` 查看，`codex-exec-mcp disallow 目录` 移除。
+4. **弹窗确认。** 其他目录在客户端支持 MCP *elicitation* 时会弹窗问你是否允许；勾选"记住这个文件夹"（默认勾选）会写入批准文件。
+
+第 2–4 类永远不会放行文件系统根、用户主目录和 Windows 系统目录。`codex_info` 会显示客户端支持什么（`client: …; roots: yes/no, elicitation: yes/no`）以及当前放行了哪些目录。可以用 `CODEX_MCP_CLIENT_ROOTS=0`、`CODEX_MCP_ASK_ROOTS=0` 或 `CODEX_MCP_APPROVED_ROOTS_FILE=off` 分别关闭。没有设置 `CODEX_MCP_ALLOWED_ROOTS` 时，除上述三类目录外都允许，和以前一样。
+
 ## 配置项
 
 全部通过客户端配置的 `env` 设置，常用的几项 `install` 会自动写好。
@@ -88,7 +99,10 @@ codex-exec-mcp doctor --live   # 额外用你的服务商实际跑一个很小�
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `CODEX_MCP_DEFAULT_CWD` | 服务器启动目录 | 调用时没传 `cwd` 就用这个目录。 |
-| `CODEX_MCP_ALLOWED_ROOTS` | 不限制 | `cwd` 必须位于这些目录之内（Windows 用 `;` 分隔，其他系统用 `:`）。根目录、用户主目录和 Windows 系统目录始终会被拒绝。 |
+| `CODEX_MCP_ALLOWED_ROOTS` | 不限制 | 始终允许的目录（Windows 用 `;` 分隔，其他系统用 `:`），另外还会加上客户端打开的文件夹和批准过的文件夹。见 [Codex 可以在哪些目录工作](#codex-可以在哪些目录工作)。 |
+| `CODEX_MCP_CLIENT_ROOTS` | `1` | 设为 `0` 后不再自动放行客户端打开的文件夹（MCP roots）。 |
+| `CODEX_MCP_ASK_ROOTS` | `1` | 设为 `0` 后不再弹窗询问其他目录（MCP elicitation）。 |
+| `CODEX_MCP_APPROVED_ROOTS_FILE` | `~/.codex-exec-mcp/approved-roots.json` | 批准过的文件夹保存在哪里；设为 `off` 关闭。 |
 | `CODEX_MCP_LEAN` | `0` | 设为 `1` 后，只对本服务器发起的任务关闭 Codex 插件和 `~/.codex/config.toml` 里的 MCP 服务器。见[节省 token](#节省-token)。 |
 | `CODEX_MCP_LEAN_KEEP` | | 精简模式下仍要保留的 MCP 服务器名，多个用英文逗号分隔。 |
 | `CODEX_MCP_DEFAULT_SANDBOX` | `workspace-write` | 可选 `read-only`、`workspace-write`、`danger-full-access`。 |
@@ -140,7 +154,7 @@ Codex 是一个会自主修改文件、执行命令的代理。本服务器能�
 ## 开发
 
 ```bash
-npm test                      # 51 个测试，使用模拟的 Codex，不需要网络或 API key
+npm test                      # 59 个测试，使用模拟的 Codex，不需要网络或 API key
 claude plugin validate .      # 校验插件和插件市场的配置文件
 ```
 

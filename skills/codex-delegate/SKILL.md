@@ -10,7 +10,8 @@ Codex runs on the user's machine with the user's own model provider. Codex does 
 ## 0. Check the setup
 - Call `codex_info` once per conversation. It shows the Codex version, the default and allowed folders, the sandbox, and whether lean mode is on.
 - If Codex is not found or a setting is wrong, tell the user what to change (README → Configuration) instead of working around it.
-- The project folder must be inside the allowed roots. Always pass it as an absolute `cwd`.
+- Always pass the project folder as an absolute `cwd`. Folders the user has open in the client (MCP roots) and folders they approved are allowed automatically on top of `allowed roots`; for any other folder the user is asked if the client supports it (`codex_info` shows `roots: yes/no, elicitation: yes/no`).
+- If `cwd` is refused, do not look for a way around it (no other `cwd`, no copying the project elsewhere). Tell the user the folder and the options from the error: open or connect the folder in the client, run `codex-exec-mcp allow "<folder>"`, or add it to `CODEX_MCP_ALLOWED_ROOTS`.
 - Note the `file tools` line: `readwrite` gives you `workspace_read` + `workspace_write`, `read` only `workspace_read`. `codex_output` is always there.
 
 ## Moving files in and out: never ask Codex to retype them
